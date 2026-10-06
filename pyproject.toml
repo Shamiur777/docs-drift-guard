@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docs-drift-guard"
+version = "0.1.0"
+description = "Detect documentation that code changes made stale, and fix what is mechanical."
+requires-python = ">=3.12"
+authors = [{ name = "Shamiur Rahman" }]
+dependencies = []
+
+[project.optional-dependencies]
+llm = ["anthropic"]
+
+[project.scripts]
+docs-drift-guard = "docs_drift_guard.cli:main"
+
+[tool.setuptools]
+packages = ["docs_drift_guard"]

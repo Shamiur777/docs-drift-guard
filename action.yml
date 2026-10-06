@@ -1,0 +1,73 @@
+name: docs-drift-guard
+description: Detect documentation that code changes made stale, auto-fix the mechanical cases and flag the rest.
+author: Shamiur Rahman
+
+inputs:
+  base:
+    description: Git revision (or directory) holding the old code, for example origin/main.
+    required: true
+  head:
+    description: Directory or git revision holding the new code. Defaults to the checked-out tree.
+    default: "."
+  docs:
+    description: Space-separated doc files or folders, relative to the repository root.
+    default: "docs"
+  src:
+    description: Code folder inside each revision (default is the whole tree).
+    default: "."
+  fix:
+    description: Set to "true" to write high-confidence mechanical fixes into the working tree.
+    default: "false"
+  fail-on:
+    description: Lowest confidence level (high, medium, low, never) that makes exit-code non-zero.
+    default: "medium"
+  report:
+    description: Where to write the Markdown report.
+    default: "docs-drift-report.md"
+  python-version:
+    description: Python version used to run the checker.
+    default: "3.12"
+
+outputs:
+  exit-code:
+    description: "0 = nothing needs attention, 1 = drift remains, 2 = the checker could not run."
+    value: ${{ steps.check.outputs.exit-code }}
+  report-path:
+    description: Path of the Markdown report.
+    value: ${{ steps.check.outputs.report-path }}
+  has-fixes:
+    description: "true when the checker produced a patch (applied to the working tree if fix is true)."
+    value: ${{ steps.check.outputs.has-fixes }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install docs-drift-guard
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}"
+    - name: Check documentation drift
+      id: check
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+        DOCS: ${{ inputs.docs }}
+        SRC: ${{ inputs.src }}
+        FIX: ${{ inputs.fix }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        REPORT: ${{ inputs.report }}
+      run: |
+        set +e
+        args=(check --base "$BASE" --head "$HEAD" --docs $DOCS --src "$SRC" \
+              --report "$REPORT" --diff docs-drift.patch --fail-on "$FAIL_ON")
+        if [ "$FIX" = "true" ]; then args+=(--fix); fi
+        python -m docs_drift_guard "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "report-path=$REPORT" >> "$GITHUB_OUTPUT"
+        if [ -s docs-drift.patch ]; then echo "has-fixes=true" >> "$GITHUB_OUTPUT"; else echo "has-fixes=false" >> "$GITHUB_OUTPUT"; fi
+        # never fail this step: the calling workflow decides what exit-code means
+        exit 0

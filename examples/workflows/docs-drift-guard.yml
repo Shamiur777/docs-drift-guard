@@ -1,0 +1,70 @@
+# Example workflow: copy this to .github/workflows/ in the repository whose docs you want to protect.
+# It has not run on GitHub yet; it is included so the first push can exercise it.
+name: docs-drift-guard
+
+on:
+  pull_request:
+
+# contents: write lets create-pull-request push a fix branch.
+# pull-requests: write lets the job comment on the PR and open the fix PR.
+# Pull requests from forks get a read-only token, so the comment and fix PR steps will fail there.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  docs-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the base revision must be available locally
+
+      - id: drift
+        uses: Shamiur777/docs-drift-guard@main   # inside this repo you can use `uses: ./`
+        with:
+          base: origin/${{ github.base_ref }}
+          docs: docs README.md
+          fix: "true"      # write mechanical fixes to the working tree so the next step can PR them
+          fail-on: medium
+
+      - name: Comment the report on the pull request
+        if: always() && steps.drift.outputs.report-path != ''
+        uses: actions/github-script@v7
+        env:
+          REPORT: ${{ steps.drift.outputs.report-path }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- docs-drift-guard -->';
+            let body = fs.readFileSync(process.env.REPORT, 'utf8');
+            if (body.length > 60000) body = body.slice(0, 60000) + '\n\n(report truncated)';
+            body = marker + '\n' + body;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const mine = comments.find(c => c.body && c.body.startsWith(marker));
+            if (mine) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Open a docs-fix pull request for the auto-fixable items
+        if: steps.drift.outputs.has-fixes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: docs-drift-guard/fix-${{ github.event.pull_request.number }}
+          base: ${{ github.head_ref }}
+          title: "docs: fix stale references (docs-drift-guard)"
+          commit-message: "docs: fix stale references found by docs-drift-guard"
+          body: "Mechanical documentation fixes for #${{ github.event.pull_request.number }}. See the report comment on that pull request for the evidence behind each change."
+          add-paths: |
+            docs/**
+            README.md
+
+      - name: Fail when items still need a human
+        if: steps.drift.outputs.exit-code == '1'
+        run: |
+          echo "docs-drift-guard found documentation that needs review. See the PR comment."
+          exit 1
